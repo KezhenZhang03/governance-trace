@@ -28,6 +28,54 @@ python app/main.py
 启动后访问：
 - Demo 页: `http://127.0.0.1:8000/`
 
+也可以使用快捷命令：
+```bash
+make run   # 启动服务
+make test  # 跑测试
+make demo  # 自动化演示并输出 JSON
+```
+
+### 30 秒本地体验（推荐）
+1. 启动服务（终端 A）：
+   ```bash
+   python app/main.py
+   ```
+2. 健康检查（终端 B）：
+   ```bash
+   curl http://127.0.0.1:8000/governance/summary
+   ```
+3. 打开浏览器访问：
+   - `http://127.0.0.1:8000/`（可视化 demo）
+4. 现场演示主链路（先提案再决策）：
+   ```bash
+   # 1) 创建 proposal
+   curl -X POST http://127.0.0.1:8000/governance/proposals \
+     -H "Content-Type: application/json" \
+     -d '{
+       "summary":"Hackathon live flow proposal",
+       "source_of_proposal":"manual",
+       "target_knowledge_ids":["kb_eval_rubric_01"],
+       "evidence_refs":["manual://live-demo-note"],
+       "rationale":"Live demo for governance trace",
+       "proposed_by":"demo-host"
+     }'
+
+   # 2) 对上一步返回的 proposal_id 做决策（approved/frontier/rejected 均可）
+   curl -X POST http://127.0.0.1:8000/governance/decisions/<proposal_id> \
+     -H "Content-Type: application/json" \
+     -d '{
+       "decision_status":"approved",
+       "reviewer":"Governance Chair",
+       "decision_reason":"Evidence is sufficient for canonical promotion",
+       "affected_assets":["lecture:week3","rubric:v2"]
+     }'
+   ```
+5. 查看链路结果：
+   ```bash
+   curl http://127.0.0.1:8000/governance/timeline/<proposal_id>
+   curl http://127.0.0.1:8000/governance/impact/<proposal_id>
+   ```
+
 ## API 列表
 ### 1) GET `/governance/proposals`
 - 可选筛选：`module`、`status`
@@ -105,6 +153,39 @@ pytest -q
 - approved 更新 KB 版本
 - frontier/rejected 不更新 canonical 落点
 - API 返回结构字段稳定
+
+### 我该如何测试？（给 hackathon 演示者）
+- **自动化 smoke test**（推荐先跑）：
+  ```bash
+  pytest -q
+  ```
+  预期输出：`4 passed`（表示核心链路已可用）。
+- **手工 API 验证**（可选）：
+  1. `GET /governance/proposals` 应返回列表（含 `proposal_id`, `summary`, `current_status`）。
+  2. `POST /governance/proposals` 成功应返回 `201` + `proposal_id`。
+  3. `POST /governance/decisions/{proposal_id}` 成功应返回 `200` + `trace_id`。
+  4. `GET /governance/timeline/{proposal_id}` 至少应含 2 个事件（proposal_created + decision）。
+  5. `GET /governance/impact/{proposal_id}` 在 approved 时应出现 `resulting_knowledge_versions`。
+
+## 自动化输出怎么用（你问的“自动化怎么输出代码使用”）
+如果你希望**一条命令自动跑完整演示并打印每一步 JSON 输出**，直接运行：
+
+```bash
+python scripts/auto_demo_flow.py
+```
+
+脚本会自动完成：
+1. 启动本地服务（端口 `8777`，进程内自动启动与关闭）。
+2. 查询初始 `summary`。
+3. 创建 proposal。
+4. 提交 approved decision。
+5. 拉取 proposal detail / timeline / impact。
+6. 输出最终 `summary`。
+
+输出是结构化 JSON，适合：
+- hackathon 现场投屏演示；
+- CI 日志保留一次完整治理链路；
+- 给评审快速说明“状态清晰、原因清晰、影响清晰”。
 
 ## Assumptions / Mock 说明
 - 仅覆盖一个模块标签：`durham-ai-module`。
