@@ -1,195 +1,109 @@
 # Governance Trace MVP (Durham AI Education System Upgrade)
 
 ## 模块说明
-本仓库实现了一个 **Governance Trace MVP**，定位为“知识治理追踪层”（不是知识正文存储系统）。MVP 聚焦：
-- Proposal 生命周期与状态机（proposed / approved / frontier / rejected，预留 under_review / superseded）。
-- Decision / Trace 记录（reviewer、decision_reason、decided_at 必留痕）。
-- Timeline（proposal 创建 + 后续治理事件有序展示）。
-- Impact（下游资产、受影响知识单元、版本落点、canonical/frontier 边界）。
+这是一个基于 **Python 标准库 `http.server` + `sqlite3`** 的 Governance Trace MVP，负责治理追踪而不是知识正文存储。
+
+新增能力：**AI proposal screening**
+- proposal 可自动触发 AI 学术评审
+- AI 输出结构化评审（分项评分、优缺点、建议、verdict）
+- 后端根据规则映射到 `approved/frontier/rejected`
+- 自动生成专业 `decision_reason` 并持久化到 `ai_reviews`
 
 ## 架构选择
-> 说明：原计划使用 FastAPI + SQLAlchemy。由于当前执行环境无法联网安装依赖，改用 **Python 标准库 HTTP Server + sqlite3** 提供同等 API 与演示能力，确保 hackathon 可直接跑通。
-
 - Backend: Python `http.server`
 - Storage: SQLite (`sqlite3`)
-- Validation: 轻量手写校验
-- Demo UI: 后端直接服务静态 `HTML/CSS/JS`
+- AI service layer: `app/ai_review.py`（只在后端调用，不暴露 key）
+- Demo UI: `static/index.html`
 
-## 目录结构
-- `app/main.py`: API 路由、状态流转、seed、KB 联动规则
-- `static/index.html`: Demo 页面（list + decision card + timeline + impact + summary）
-- `tests/test_governance.py`: 核心 smoke tests（真实 HTTP 调用）
-- `requirements.txt`: 仅测试依赖
+## 安全与环境变量
+> **不要把 API key 写进代码/前端/README 示例值。**
 
-## 运行方式
+必读变量：
+- `OPENAI_API_KEY`（真实调用时必需）
+- `OPENAI_REVIEW_MODEL`（可选，默认 `gpt-4.1-mini`）
+- `AI_REVIEW_ENABLED`（可选，默认 `true`）
+- `AI_REVIEW_MOCK`（可选，`1` 时走离线 mock，不访问外网）
+
+### 本地运行（真实 AI）
 ```bash
+export OPENAI_API_KEY="<your_key>"
+export OPENAI_REVIEW_MODEL="gpt-4.1-mini"
+export AI_REVIEW_ENABLED=1
+export AI_REVIEW_MOCK=0
 python app/main.py
 ```
-启动后访问：
-- Demo 页: `http://127.0.0.1:8000/`
 
-也可以使用快捷命令：
+### 本地运行（离线 mock，推荐开发/测试）
+```bash
+export AI_REVIEW_ENABLED=1
+export AI_REVIEW_MOCK=1
+python app/main.py
+```
+
+## 快捷命令
 ```bash
 make run   # 启动服务
 make test  # 跑测试
 make demo  # 自动化演示并输出 JSON
 ```
 
-### 30 秒本地体验（推荐）
-1. 启动服务（终端 A）：
-   ```bash
-   python app/main.py
-   ```
-2. 健康检查（终端 B）：
-   ```bash
-   curl http://127.0.0.1:8000/governance/summary
-   ```
-3. 打开浏览器访问：
-   - `http://127.0.0.1:8000/`（可视化 demo）
-4. 现场演示主链路（先提案再决策）：
-   ```bash
-   # 1) 创建 proposal
-   curl -X POST http://127.0.0.1:8000/governance/proposals \
-     -H "Content-Type: application/json" \
-     -d '{
-       "summary":"Hackathon live flow proposal",
-       "source_of_proposal":"manual",
-       "target_knowledge_ids":["kb_eval_rubric_01"],
-       "evidence_refs":["manual://live-demo-note"],
-       "rationale":"Live demo for governance trace",
-       "proposed_by":"demo-host"
-     }'
+## 主要 API
+- `GET /governance/proposals`
+- `GET /governance/proposals/{id}`（新增 `proposal_text` + `latest_ai_review`）
+- `POST /governance/proposals`（新增 `proposal_text`, `auto_screen`）
+- `POST /governance/decisions/{proposal_id}`（保留人工决策）
+- `POST /governance/ai-screen/{proposal_id}`（新增：手动触发 AI 审查）
+- `GET /governance/timeline/{proposal_id}`
+- `GET /governance/impact/{proposal_id}`
+- `GET /governance/summary`
 
-   # 2) 对上一步返回的 proposal_id 做决策（approved/frontier/rejected 均可）
-   curl -X POST http://127.0.0.1:8000/governance/decisions/<proposal_id> \
-     -H "Content-Type: application/json" \
-     -d '{
-       "decision_status":"approved",
-       "reviewer":"Governance Chair",
-       "decision_reason":"Evidence is sufficient for canonical promotion",
-       "affected_assets":["lecture:week3","rubric:v2"]
-     }'
-   ```
-5. 查看链路结果：
-   ```bash
-   curl http://127.0.0.1:8000/governance/timeline/<proposal_id>
-   curl http://127.0.0.1:8000/governance/impact/<proposal_id>
-   ```
-
-## API 列表
-### 1) GET `/governance/proposals`
-- 可选筛选：`module`、`status`
-- 返回 proposal summaries
-
-### 2) GET `/governance/proposals/{id}`
-- 返回完整 proposal 详情 + latest decision 摘要
-
-### 3) POST `/governance/proposals`
-- 创建 proposal
-- 最小输入：`summary`, `source_of_proposal`, `target_knowledge_ids`, `evidence_refs`
-
-### 4) POST `/governance/decisions/{proposal_id}`
-- 创建治理决策
-- 必填：`decision_status`, `reviewer`, `decision_reason`
-- 决策状态支持：`approved | frontier | rejected`
-
-### 5) GET `/governance/timeline/{proposal_id}`
-- 返回按时间排序的治理事件
-
-### 6) GET `/governance/impact/{proposal_id}`
-- 返回下游影响与治理落点
-
-### 7) GET `/governance/summary`
-- 返回状态汇总与最近一条决策
-
-## 示例请求
-### 创建 Proposal
+## curl 示例
+### 1) 创建 proposal 并自动 AI 审查
 ```bash
 curl -X POST http://127.0.0.1:8000/governance/proposals \
   -H "Content-Type: application/json" \
   -d '{
-    "summary": "Revise rubric language",
+    "summary": "AI screening live proposal",
     "source_of_proposal": "manual",
     "target_knowledge_ids": ["kb_eval_rubric_01"],
-    "evidence_refs": ["manual://teacher-feedback"]
+    "evidence_refs": ["manual://live-demo"],
+    "rationale": "Demonstrate AI governance screening",
+    "proposal_text": "This proposal introduces a clear method and evaluation plan",
+    "auto_screen": true
   }'
 ```
 
-### 提交 Decision
+### 2) 对已有 proposal 手动触发 AI review
 ```bash
-curl -X POST http://127.0.0.1:8000/governance/decisions/<proposal_id> \
-  -H "Content-Type: application/json" \
-  -d '{
-    "decision_status": "frontier",
-    "reviewer": "Prof. L. Singh",
-    "decision_reason": "Need one more local validation cycle",
-    "affected_assets": ["view:frontier-dashboard"]
-  }'
+curl -X POST http://127.0.0.1:8000/governance/ai-screen/<proposal_id>
 ```
 
-## Seed 数据与演示场景
-系统启动自动写入 4 条示例 Proposal：
-1. **approved case**：有 evidence、review reason、KB 版本更新、impact 可见。
-2. **frontier case**：有 evidence，被标记 frontier，未进入 canonical。
-3. **rejected case**：有 reviewer/reason，被拒绝，无正式下游更新。
-4. **live flow case**：仅 proposal（待决策），用于现场演示 signal -> decision 主链路。
+## 页面演示步骤
+1. 打开 `http://127.0.0.1:8000/`
+2. 在 Proposal List 中选择 `proposed` 项目并点击 **Run AI Review**
+3. 观察 Decision Detail：Reviewer / Final Verdict / Decision Reason / Average Score / Review Model
+4. 查看 AI Review Details：Summary、Score Table、Strengths、Weaknesses、Suggestions
+5. 查看 Timeline 与 Impact，确认状态与下游落点变化
 
-## Demo Walkthrough（简短）
-1. 打开 `/` 查看 Proposal list（状态颜色一致）。
-2. 点击 approved 案例，展示 decision detail + timeline + impact（可见 resulting versions）。
-3. 点击 frontier 案例，确认 impact 可见但 canonical outcome 为 frontier 保留。
-4. 点击 rejected 案例，确认无 resulting knowledge versions。
-5. 现场新建一条 proposal，再提交 decision，刷新列表展示闭环。
-
-## 测试与验证
+## 测试
 ```bash
 pytest -q
 ```
-覆盖：
-- proposal 创建
-- proposal -> approved/frontier/rejected
-- decision 必填字段约束
-- timeline 完整链路
-- approved 更新 KB 版本
-- frontier/rejected 不更新 canonical 落点
-- API 返回结构字段稳定
+测试覆盖：
+- 人工 decision 相关回归
+- 创建 proposal 时 `auto_screen=true` 的 reject/frontier/approve 路径
+- `/governance/ai-screen/{id}` 对已有 proposal 的触发
+- 缺少 `OPENAI_API_KEY` 时返回可读错误信息
+- 离线无外网可跑（mock 路径）
 
-### 我该如何测试？（给 hackathon 演示者）
-- **自动化 smoke test**（推荐先跑）：
-  ```bash
-  pytest -q
-  ```
-  预期输出：`4 passed`（表示核心链路已可用）。
-- **手工 API 验证**（可选）：
-  1. `GET /governance/proposals` 应返回列表（含 `proposal_id`, `summary`, `current_status`）。
-  2. `POST /governance/proposals` 成功应返回 `201` + `proposal_id`。
-  3. `POST /governance/decisions/{proposal_id}` 成功应返回 `200` + `trace_id`。
-  4. `GET /governance/timeline/{proposal_id}` 至少应含 2 个事件（proposal_created + decision）。
-  5. `GET /governance/impact/{proposal_id}` 在 approved 时应出现 `resulting_knowledge_versions`。
+## 目录结构
+- `app/main.py`：路由与 orchestration、DB 迁移、AI screening 接入
+- `app/ai_review.py`：prompt 构建、OpenAI 调用、解析、分类、reason 生成
+- `static/index.html`：demo UI（包含 Run AI Review 按钮和 AI 评审详情展示）
+- `tests/test_governance.py`：smoke + AI screening tests
+- `scripts/auto_demo_flow.py`：自动演示脚本
 
-## 自动化输出怎么用（你问的“自动化怎么输出代码使用”）
-如果你希望**一条命令自动跑完整演示并打印每一步 JSON 输出**，直接运行：
-
-```bash
-python scripts/auto_demo_flow.py
-```
-
-脚本会自动完成：
-1. 启动本地服务（端口 `8777`，进程内自动启动与关闭）。
-2. 查询初始 `summary`。
-3. 创建 proposal。
-4. 提交 approved decision。
-5. 拉取 proposal detail / timeline / impact。
-6. 输出最终 `summary`。
-
-输出是结构化 JSON，适合：
-- hackathon 现场投屏演示；
-- CI 日志保留一次完整治理链路；
-- 给评审快速说明“状态清晰、原因清晰、影响清晰”。
-
-## Assumptions / Mock 说明
-- 仅覆盖一个模块标签：`durham-ai-module`。
-- 仅用 2–3 个知识单元做 KB mock，不保存正文。
-- `resulting_knowledge_versions` 在 approved 时可自动生成；其他状态保持空。
-- under_review/superseded 仅在状态枚举层预留。
-- 时间统一使用 ISO 8601 字符串。
+## Assumptions / Mock
+- 仅覆盖一个模块：`durham-ai-module`
+- KB 仅 mock 元信息（version/canonical），不存正文
+- `AI_REVIEW_MOCK=1` 时返回 deterministic mock review

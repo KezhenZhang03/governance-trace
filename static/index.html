@@ -6,39 +6,56 @@
   <title>Governance Trace MVP</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 24px; background: #f5f7fb; color: #1f2937; }
-    .grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; }
-    .card { background: #fff; border-radius: 10px; padding: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
-    .summary { display: flex; gap: 8px; margin-bottom: 16px; }
-    .pill { padding: 8px 12px; border-radius: 20px; font-weight: 600; color: white; font-size: 12px; }
+    .grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 16px; }
+    .card { background: #fff; border-radius: 10px; padding: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); margin-bottom: 16px; }
+    .summary { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    .pill { padding: 6px 10px; border-radius: 20px; font-weight: 600; color: white; font-size: 12px; display: inline-block; }
     .status-proposed{ background:#3b82f6; }
     .status-approved{ background:#16a34a; }
     .status-frontier{ background:#7c3aed; }
     .status-rejected{ background:#b91c1c; }
     .status-under_review{ background:#f59e0b; }
-    .item { border-bottom: 1px solid #e5e7eb; padding: 8px 0; cursor: pointer; }
-    .item:hover { background: #f9fafb; }
+    .item { border-bottom: 1px solid #e5e7eb; padding: 10px 0; }
+    .item:last-child { border-bottom: none; }
     .timeline { list-style: none; padding-left: 8px; }
     .timeline li { margin: 8px 0; border-left: 3px solid #d1d5db; padding-left: 10px; }
     code { background: #eef2ff; padding: 1px 4px; border-radius: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid #e5e7eb; padding: 6px; text-align: left; vertical-align: top; }
+    .btn { border: none; border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 12px; font-weight: 600; }
+    .btn-ai { background: #111827; color: #fff; }
+    .btn-ai:disabled { background: #9ca3af; cursor: not-allowed; }
+    .badge-reject { background: #991b1b; color: #fff; padding: 4px 8px; border-radius: 6px; font-weight: 700; }
+    .list { margin: 6px 0 0 20px; }
+    .muted { color: #6b7280; }
   </style>
 </head>
 <body>
   <h1>Governance Trace MVP</h1>
   <div id="summary" class="summary"></div>
+
   <div class="grid">
     <div class="card">
       <h2>Proposal List</h2>
       <div id="proposals"></div>
     </div>
+
     <div>
-      <div class="card" style="margin-bottom: 16px;">
+      <div class="card">
         <h2>Decision Detail</h2>
         <div id="decision">Select a proposal to view details.</div>
       </div>
-      <div class="card" style="margin-bottom: 16px;">
+
+      <div class="card">
+        <h2>AI Review Details</h2>
+        <div id="aiReview">No AI review for selected proposal.</div>
+      </div>
+
+      <div class="card">
         <h2>Status Timeline</h2>
         <ul id="timeline" class="timeline"></ul>
       </div>
+
       <div class="card">
         <h2>Impact Panel</h2>
         <div id="impact"></div>
@@ -48,6 +65,7 @@
 
   <script>
     const statusClass = (s) => `status-${s}`;
+    let currentProposalId = null;
 
     async function loadSummary() {
       const data = await (await fetch('/governance/summary')).json();
@@ -60,39 +78,118 @@
       `;
     }
 
-    async function loadProposals() {
+    async function runAiReview(proposalId, button) {
+      button.disabled = true;
+      button.textContent = 'Reviewing...';
+      try {
+        const res = await fetch(`/governance/ai-screen/${proposalId}`, { method: 'POST' });
+        const body = await res.json();
+        if (!res.ok) {
+          alert(body.detail || 'AI review failed');
+        }
+      } catch (err) {
+        alert(`AI review failed: ${err.message}`);
+      }
+      await loadSummary();
+      await loadProposals(proposalId);
+      await selectProposal(proposalId);
+    }
+
+    async function loadProposals(preferredId = null) {
       const proposals = await (await fetch('/governance/proposals')).json();
       const root = document.getElementById('proposals');
       root.innerHTML = '';
+
       proposals.forEach((p) => {
         const div = document.createElement('div');
         div.className = 'item';
-        div.innerHTML = `<strong>${p.summary}</strong><br/>
-          <code>${p.proposal_id}</code><br/>
-          Source: ${p.source_of_proposal} |
-          <span class="pill ${statusClass(p.current_status)}">${p.current_status}</span>`;
-        div.onclick = () => selectProposal(p.proposal_id);
+
+        const header = document.createElement('div');
+        header.innerHTML = `<strong>${p.summary}</strong><br/><code>${p.proposal_id}</code><br/>Source: ${p.source_of_proposal} <span class="pill ${statusClass(p.current_status)}">${p.current_status}</span>`;
+        header.style.cursor = 'pointer';
+        header.onclick = () => selectProposal(p.proposal_id);
+        div.appendChild(header);
+
+        if (p.current_status === 'proposed') {
+          const btn = document.createElement('button');
+          btn.className = 'btn btn-ai';
+          btn.textContent = 'Run AI Review';
+          btn.onclick = () => runAiReview(p.proposal_id, btn);
+          div.appendChild(btn);
+        }
+
         root.appendChild(div);
       });
-      if (proposals.length) selectProposal(proposals[0].proposal_id);
+
+      if (preferredId) {
+        currentProposalId = preferredId;
+      } else if (!currentProposalId && proposals.length) {
+        currentProposalId = proposals[0].proposal_id;
+      }
+    }
+
+    function renderAiReview(aiReview) {
+      const container = document.getElementById('aiReview');
+      if (!aiReview) {
+        container.innerHTML = '<p class="muted">No AI review for selected proposal.</p>';
+        return;
+      }
+
+      const verdictBadge = aiReview.final_verdict === 'Reject'
+        ? '<span class="badge-reject">Reject</span>'
+        : `<span class="pill ${statusClass(aiReview.final_verdict === 'Borderline' ? 'frontier' : 'approved')}">${aiReview.final_verdict}</span>`;
+
+      const scoreRows = aiReview.scores.map((s) => `
+        <tr>
+          <td>${s.criterion}</td>
+          <td><strong>${s.score}</strong></td>
+          <td>${s.justification}</td>
+        </tr>
+      `).join('');
+
+      container.innerHTML = `
+        <p><strong>Summary:</strong> ${aiReview.summary}</p>
+        <p><strong>Final Verdict:</strong> ${verdictBadge}</p>
+        <p><strong>Verdict Justification:</strong> ${aiReview.verdict_justification}</p>
+        <p><strong>Average Score:</strong> ${aiReview.average_score} | <strong>Model:</strong> ${aiReview.review_model} | <strong>Reviewed At:</strong> ${aiReview.created_at}</p>
+        <table>
+          <thead><tr><th>Criterion</th><th>Score</th><th>Justification</th></tr></thead>
+          <tbody>${scoreRows}</tbody>
+        </table>
+        <p><strong>Strengths</strong></p>
+        <ul class="list">${aiReview.strengths.map((x) => `<li>${x}</li>`).join('')}</ul>
+        <p><strong>Weaknesses</strong></p>
+        <ul class="list">${aiReview.weaknesses.map((x) => `<li>${x}</li>`).join('')}</ul>
+        <p><strong>Suggestions for Improvement</strong></p>
+        <ul class="list">${aiReview.suggestions.map((x) => `<li>${x}</li>`).join('')}</ul>
+      `;
+
+      console.debug('AI review raw payload', aiReview);
     }
 
     async function selectProposal(id) {
+      currentProposalId = id;
       const detail = await (await fetch(`/governance/proposals/${id}`)).json();
       const timeline = await (await fetch(`/governance/timeline/${id}`)).json();
       const impact = await (await fetch(`/governance/impact/${id}`)).json();
 
       const decisionEl = document.getElementById('decision');
-      if (detail.latest_decision) {
+      const ld = detail.latest_decision;
+      if (ld) {
         decisionEl.innerHTML = `
-          <p><strong>Reviewer:</strong> ${detail.latest_decision.reviewer}</p>
-          <p><strong>Reason:</strong> ${detail.latest_decision.decision_reason}</p>
-          <p><strong>Decided At:</strong> ${detail.latest_decision.decided_at}</p>
+          <p><strong>Reviewer:</strong> ${ld.reviewer}</p>
+          <p><strong>Final Verdict:</strong> <span class="pill ${statusClass(ld.decision_status)}">${ld.decision_status}</span></p>
+          <p><strong>Decision Reason:</strong> ${ld.decision_reason}</p>
+          <p><strong>Decided At:</strong> ${ld.decided_at}</p>
           <p><strong>Evidence Refs:</strong> ${detail.evidence_refs.join(', ') || '-'}</p>
+          <p><strong>Average Score:</strong> ${detail.latest_ai_review?.average_score ?? '-'}</p>
+          <p><strong>Review Model:</strong> ${detail.latest_ai_review?.review_model ?? '-'}</p>
         `;
       } else {
         decisionEl.innerHTML = `<p>No decision yet.</p><p><strong>Evidence Refs:</strong> ${detail.evidence_refs.join(', ') || '-'}</p>`;
       }
+
+      renderAiReview(detail.latest_ai_review);
 
       const timelineEl = document.getElementById('timeline');
       timelineEl.innerHTML = '';
@@ -113,8 +210,13 @@
       `;
     }
 
-    loadSummary();
-    loadProposals();
+    async function boot() {
+      await loadSummary();
+      await loadProposals();
+      if (currentProposalId) await selectProposal(currentProposalId);
+    }
+
+    boot();
   </script>
 </body>
 </html>

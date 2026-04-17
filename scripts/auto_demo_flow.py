@@ -8,6 +8,7 @@ and prints JSON responses so hackathon presenters can show the full chain quickl
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
@@ -38,6 +39,9 @@ def show(title: str, status: int, data: dict | list) -> None:
 
 
 def main() -> None:
+    os.environ.setdefault("AI_REVIEW_ENABLED", "1")
+    os.environ.setdefault("AI_REVIEW_MOCK", "1")
+
     server = create_server(port=8777)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -56,19 +60,12 @@ def main() -> None:
             "evidence_refs": ["manual://auto-demo"],
             "proposed_action": "promote_to_canonical",
             "proposed_by": "auto-demo-script",
+            "auto_screen": True,
+            "proposal_text": "A strong and feasible proposal with solid methodology and clear evaluation plan.",
         }
         status, created = request("POST", "/governance/proposals", create_payload)
         show("Create proposal", status, created)
         proposal_id = created["proposal_id"]
-
-        decision_payload = {
-            "decision_status": "approved",
-            "reviewer": "Auto Reviewer",
-            "decision_reason": "Automated acceptance to showcase canonical update",
-            "affected_assets": ["lecture:auto-demo", "rubric:auto-demo-v1"],
-        }
-        status, decision = request("POST", f"/governance/decisions/{proposal_id}", decision_payload)
-        show("Submit decision", status, decision)
 
         status, detail = request("GET", f"/governance/proposals/{proposal_id}")
         show("Proposal detail", status, detail)
